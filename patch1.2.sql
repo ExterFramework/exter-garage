@@ -1,0 +1,33 @@
+DROP TABLE IF EXISTS `player_vehicles`;
+
+CREATE TABLE IF NOT EXISTS `player_vehicles` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `license` varchar(50) DEFAULT NULL,
+  `citizenid` varchar(11) DEFAULT NULL,
+  `vehicle` varchar(50) DEFAULT NULL,
+  `hash` varchar(50) DEFAULT NULL,
+  `mods` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,
+  `plate` varchar(8) NOT NULL,
+  `fakeplate` varchar(8) DEFAULT NULL,
+  `garage` varchar(50) DEFAULT NULL,
+  `fuel` int(11) DEFAULT 100,
+  `engine` float DEFAULT 1000,
+  `body` float DEFAULT 1000,
+  `state` int(11) DEFAULT 1,
+  `depotprice` int(11) NOT NULL DEFAULT 0,
+  `drivingdistance` int(50) DEFAULT NULL,
+  `status` text DEFAULT NULL,
+  `balance` int(11) NOT NULL DEFAULT 0,
+  `paymentamount` int(11) NOT NULL DEFAULT 0,
+  `paymentsleft` int(11) NOT NULL DEFAULT 0,
+  `financetime` int(11) NOT NULL DEFAULT 0,
+  `logs` longtext DEFAULT '[]',
+  `loandate` varchar(255) DEFAULT NULL,
+  `loanperiode` varchar(255) DEFAULT NULL,
+  `nosColour` text DEFAULT NULL,
+  `traveldistance` int(50) DEFAULT 0,
+  `noslevel` int(10) DEFAULT 0,
+  `hasnitro` tinyint(4) DEFAULT 0,
+  `datefinish` date NOT NULL DEFAULT '2999-06-01',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
