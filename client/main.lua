@@ -177,7 +177,12 @@ function OpenGarageMenu(data)
                 end
                 local mods = json.decode(v.mods) or {}
                 local logs = json.decode(v.logs)
-                table.sort(logs, function(a, b) return a.time > b.time end)
+                if type(logs) ~= 'table' then logs = {} end
+                table.sort(logs, function(a, b)
+                    local timeA = a and a.time or ''
+                    local timeB = b and b.time or ''
+                    return timeA > timeB
+                end)
                 formattedVehicles[#formattedVehicles + 1] = {
                     vehicle = vehicle,
                     vehClass = GetVehicleClassFromName(GetHashKey(vehicle)),
