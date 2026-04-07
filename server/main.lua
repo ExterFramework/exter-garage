@@ -10,9 +10,9 @@ AddEventHandler('onResourceStart', function(resource)
             end
         else
             if Table == "player_vehicles" then
-                MySQL.update('UPDATE player_vehicles SET depotprice = ' .. Config.DepotPrice .. ' WHERE state = 0', {})
+                MySQL.update('UPDATE player_vehicles SET depotprice = ? WHERE state = 0', {Config.DepotPrice})
             else
-                MySQL.update('UPDATE owned_vehicles SET pound = ' .. Config.DepotPrice .. ' WHERE stored = 1', {})
+                MySQL.update('UPDATE owned_vehicles SET pound = ? WHERE stored = 1', {Config.DepotPrice})
             end
         end
     end
@@ -639,12 +639,16 @@ function GetVehicleTypeByModel(model)
     return vehicleType or 'automobile'
 end
 
+local function sanitizePlate(plate)
+    local ignore = "'_./ '"
+    return tostring(plate or ''):gsub("[" .. ignore .. "]+", "")
+end
+
 CreateCallback('exter-garage:server:spawnvehicle', function(source, cb, plate, vehicle, coords)
     local vehType = vehiclesData[vehicle] and vehiclesData[vehicle].type or GetVehicleTypeByModel(vehicle)
     local veh = CreateVehicleServerSetter(GetHashKey(vehicle), vehType, coords.x, coords.y, coords.z, coords.w)
     local netId = NetworkGetNetworkIdFromEntity(veh)
-    local ignore = "'_./ '" 
-    local plate = plate:gsub("["..ignore.."]+", "")
+    local plate = sanitizePlate(plate)
     SetVehicleNumberPlateText(veh, plate)
     local vehProps = {}
     if Table == "player_vehicles" then
@@ -784,27 +788,35 @@ end
 -- Events
 RegisterNetEvent('exter-garage:server:updateVehicleStats', function(plate, fuel, engine, body, vehicleProps)
     local src = source
+    local normalizedPlate = sanitizePlate(plate)
+    if not isVehicleOwned(src, normalizedPlate) and not isVehicleOwned2(src, normalizedPlate) then
+        return
+    end
     if Table == "player_vehicles" then
-        local vehExist = MySQL.query.await('SELECT * FROM player_vehicles WHERE plate = ?', {plate})
+        local vehExist = MySQL.query.await('SELECT * FROM player_vehicles WHERE plate = ?', {normalizedPlate})
         if not vehExist[1] or not vehExist then
-            print("vehicle doesn't exist: " .. plate)
+            print("vehicle doesn't exist: " .. normalizedPlate)
         end
-        MySQL.update('UPDATE player_vehicles SET fuel = ?, engine = ?, body = ?, mods = ? WHERE plate = ?', {fuel, engine, body, json.encode(vehicleProps), plate})
+        MySQL.update('UPDATE player_vehicles SET fuel = ?, engine = ?, body = ?, mods = ? WHERE plate = ?', {fuel, engine, body, json.encode(vehicleProps), normalizedPlate})
     else
-        local vehExist = MySQL.query.await('SELECT * FROM owned_vehicles WHERE plate = ?', {plate})
+        local vehExist = MySQL.query.await('SELECT * FROM owned_vehicles WHERE plate = ?', {normalizedPlate})
         if not vehExist[1] or not vehExist then
-            print("vehicle doesn't exist: " .. plate)
+            print("vehicle doesn't exist: " .. normalizedPlate)
         end
-        MySQL.update('UPDATE owned_vehicles SET fuel = ?, engine = ?, body = ?, mods = ? WHERE plate = ?', {fuel, engine, body, json.encode(vehicleProps), plate})
+        MySQL.update('UPDATE owned_vehicles SET fuel = ?, engine = ?, body = ?, mods = ? WHERE plate = ?', {fuel, engine, body, json.encode(vehicleProps), normalizedPlate})
     end
 end)
 
 RegisterNetEvent('exter-garage:server:updateVehicleState', function(state, plate)
     local src = source
+    local normalizedPlate = sanitizePlate(plate)
+    if not isVehicleOwned(src, normalizedPlate) and not isVehicleOwned2(src, normalizedPlate) then
+        return
+    end
     if Table == "player_vehicles" then
-        MySQL.update('UPDATE player_vehicles SET state = ?, depotprice = ? WHERE plate = ?', {state, 0, plate})
+        MySQL.update('UPDATE player_vehicles SET state = ?, depotprice = ? WHERE plate = ?', {state, 0, normalizedPlate})
     else
-        MySQL.update('UPDATE owned_vehicles SET stored = ?, pound = ? WHERE plate = ?', {state, 0, plate})
+        MySQL.update('UPDATE owned_vehicles SET stored = ?, pound = ? WHERE plate = ?', {state, 0, normalizedPlate})
     end
 end)
 
@@ -928,9 +940,9 @@ exports('getAllGarages', getAllGarages)
 
 RegisterNetEvent('exter-garage:wasabi:impound', function(plate)
     if Table == "player_vehicles" then
-        MySQL.update('UPDATE player_vehicles SET state = 0, depotprice = ' .. Config.DepotPrice .. ' WHERE plate = ?', {plate})
+        MySQL.update('UPDATE player_vehicles SET state = 0, depotprice = ? WHERE plate = ?', {Config.DepotPrice, plate})
     else
-        MySQL.update('UPDATE owned_vehicles SET stored = 0, depotprice = ' .. Config.DepotPrice .. ' WHERE plate = ?', {plate})
+        MySQL.update('UPDATE owned_vehicles SET stored = 0, pound = ? WHERE plate = ?', {Config.DepotPrice, plate})
     end
 end)
 
@@ -940,7 +952,7 @@ AddEventHandler('entityRemoved', function(entity)
             if Table == "player_vehicles" then
                 MySQL.update('UPDATE player_vehicles SET state = ?, depotprice = ? WHERE plate = ?', { 0, Config.DepotPrice, v.plate })
             else
-                MySQL.update('UPDATE owned_vehicles SET stored = ?, pound = ? WHERE plate = ? AND owner = ?', { 0, Config.DepotPrice, v.plate })
+                MySQL.update('UPDATE owned_vehicles SET stored = ?, pound = ? WHERE plate = ?', { 0, Config.DepotPrice, v.plate })
             end
             OutsideVehicles[k] = nil
         end
@@ -953,7 +965,7 @@ RegisterNetEvent('exter-garage:vehicleDestroyed:server', function(netId, plate)
             if Table == "player_vehicles" then
                 MySQL.update('UPDATE player_vehicles SET state = ?, depotprice = ? WHERE plate = ?', { 0, Config.DepotPrice, plate })
             else
-                MySQL.update('UPDATE owned_vehicles SET stored = ?, pound = ? WHERE plate = ? AND owner = ?', { 0, Config.DepotPrice, plate })
+                MySQL.update('UPDATE owned_vehicles SET stored = ?, pound = ? WHERE plate = ?', { 0, Config.DepotPrice, plate })
             end
             OutsideVehicles[k] = nil
         end
