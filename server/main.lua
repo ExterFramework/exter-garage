@@ -76,17 +76,27 @@ end)
 
 CreateCallback('exter-garage:server:GetGarageVehicles', function(source, cb, garage, type, category)
     local vehicles = {}
+    local seenPlates = {}
     local Player = GetPlayer(source)
     if not Player then return end
     local citizenId = GetPlayerCid(source)
-    
+
     local function addVehiclesToTable(vehiclesData, shared)
         for _, v in pairs(vehiclesData) do
+            local plate = sanitizePlate(v.plate)
+            if seenPlates[plate] then
+                goto continue
+            end
+            seenPlates[plate] = true
+            local stateValue = v.state
+            if stateValue == nil then stateValue = v.stored end
+            local depotPrice = v.depotprice
+            if depotPrice == nil then depotPrice = v.pound end
             table.insert(vehicles, {
                 id = v.id,
-                depotprice = v.depotprice,
+                depotprice = depotPrice or 0,
                 garage = v.garage,
-                citizenid = v.citizenId,
+                citizenid = v.citizenid or v.citizenId or v.owner,
                 hash = v.hash,
                 paymentsleft = v.paymentsleft,
                 plate = v.plate,
@@ -97,12 +107,13 @@ CreateCallback('exter-garage:server:GetGarageVehicles', function(source, cb, gar
                 logs = v.logs,
                 engine = v.engine,
                 vehicle = v.vehicle,
-                state = v.state,
+                state = stateValue or 1,
                 license = v.license,
                 fuel = v.fuel,
                 financetime = v.financetime,
                 shared = shared
             })
+            ::continue::
         end
     end
 
@@ -644,6 +655,16 @@ local function sanitizePlate(plate)
     return tostring(plate or ''):gsub("[" .. ignore .. "]+", "")
 end
 
+local function getPlateMatchClause()
+    return "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(plate, ' ', ''),'.',''),'/',''),'_',''),\"'\",'') = ?"
+end
+
+local function getVehicleByPlate(tableName, plate)
+    local normalizedPlate = sanitizePlate(plate)
+    local query = ('SELECT * FROM %s WHERE plate = ? OR %s LIMIT 1'):format(tableName, getPlateMatchClause())
+    return MySQL.single.await(query, { plate, normalizedPlate })
+end
+
 CreateCallback('exter-garage:server:spawnvehicle', function(source, cb, plate, vehicle, coords)
     local vehType = vehiclesData[vehicle] and vehiclesData[vehicle].type or GetVehicleTypeByModel(vehicle)
     local veh = CreateVehicleServerSetter(GetHashKey(vehicle), vehType, coords.x, coords.y, coords.z, coords.w)
@@ -713,6 +734,7 @@ end)
 -- end)
 
 CreateCallback('exter-garage:server:IsSpawnOk', function(_, cb, plate, type)
+    plate = sanitizePlate(plate)
     if OutsideVehicles[plate] and DoesEntityExist(OutsideVehicles[plate].entity) then
         cb(false)
         return
@@ -723,15 +745,9 @@ end)
 CreateCallback('exter-garage:server:canDeposit', function(source, cb, plate, type, garage, state)
     local src = source
     local Player = GetPlayer(src)
-    -- local ignore = "'_./ '" 
-    -- local plate = plate:gsub("["..ignore.."]+", "")
-    if Table == "player_vehicles" then
-        isOwned = MySQL.scalar.await('SELECT citizenid FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
-    else
-        isOwned = MySQL.scalar.await('SELECT owner FROM owned_vehicles WHERE plate = ? LIMIT 1', { plate })
-    end
+    local normalizedPlate = sanitizePlate(plate)
     local citizenId = GetPlayerCid(src)
-    if isVehicleOwned(src, plate) == false and isVehicleOwned2(src, plate) == false then
+    if isVehicleOwned(src, normalizedPlate) == false and isVehicleOwned2(src, normalizedPlate) == false then
         return cb(false)
     end
     --if type == 'house' and not exports['qb-houses']:hasKey(Player.PlayerData.license, citizenId, Config.Garages[garage].houseName) then
@@ -743,13 +759,13 @@ CreateCallback('exter-garage:server:canDeposit', function(source, cb, plate, typ
         return
     end
     if state == 1 then
-        if OutsideVehicles[plate] then
-            OutsideVehicles[plate] = nil
+        if OutsideVehicles[normalizedPlate] then
+            OutsideVehicles[normalizedPlate] = nil
         end
         if Table == "player_vehicles" then
-            MySQL.update('UPDATE player_vehicles SET state = ?, depotprice = ?, garage = ? WHERE plate = ?', {state, 0, garage, plate})
+            MySQL.update(('UPDATE player_vehicles SET state = ?, depotprice = ?, garage = ? WHERE plate = ? OR %s'):format(getPlateMatchClause()), {state, 0, garage, plate, normalizedPlate})
         else
-            MySQL.update('UPDATE owned_vehicles SET stored = ?, pound = ?, garage = ? WHERE plate = ?', {state, 0, garage, plate})
+            MySQL.update(('UPDATE owned_vehicles SET stored = ?, pound = ?, garage = ? WHERE plate = ? OR %s'):format(getPlateMatchClause()), {state, 0, garage, plate, normalizedPlate})
         end
         cb(true)
     else
@@ -759,23 +775,25 @@ end)
 
 function isVehicleOwned(source, plate)
     local citizenId = GetPlayerCid(source)
+    local vehicleData
     if Table == "player_vehicles" then
-        isOwned = MySQL.scalar.await('SELECT citizenid FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
+        vehicleData = getVehicleByPlate('player_vehicles', plate)
+        if not vehicleData then return false end
+        return vehicleData.citizenid == citizenId
     else
-        isOwned = MySQL.scalar.await('SELECT owner FROM owned_vehicles WHERE plate = ? LIMIT 1', { plate })
+        vehicleData = getVehicleByPlate('owned_vehicles', plate)
+        if not vehicleData then return false end
+        return vehicleData.owner == citizenId
     end
-    if isOwned ~= citizenId then
-        return false
-    end
-    return true
 end
 
 function isVehicleOwned2(source, plate)
     local citizenId = GetPlayerCid(source)
+    local normalizedPlate = sanitizePlate(plate)
     -- Shared Key Check
     if SharedKeys[citizenId] then
         for k, v in pairs(SharedKeys[citizenId]) do
-            if v == plate then
+            if sanitizePlate(v) == normalizedPlate then
                 return true
             end
         end
@@ -793,17 +811,19 @@ RegisterNetEvent('exter-garage:server:updateVehicleStats', function(plate, fuel,
         return
     end
     if Table == "player_vehicles" then
-        local vehExist = MySQL.query.await('SELECT * FROM player_vehicles WHERE plate = ?', {normalizedPlate})
+        local vehExist = MySQL.query.await(('SELECT * FROM player_vehicles WHERE plate = ? OR %s'):format(getPlateMatchClause()), {plate, normalizedPlate})
         if not vehExist[1] or not vehExist then
             print("vehicle doesn't exist: " .. normalizedPlate)
+            return
         end
-        MySQL.update('UPDATE player_vehicles SET fuel = ?, engine = ?, body = ?, mods = ? WHERE plate = ?', {fuel, engine, body, json.encode(vehicleProps), normalizedPlate})
+        MySQL.update(('UPDATE player_vehicles SET fuel = ?, engine = ?, body = ?, mods = ? WHERE plate = ? OR %s'):format(getPlateMatchClause()), {fuel, engine, body, json.encode(vehicleProps), plate, normalizedPlate})
     else
-        local vehExist = MySQL.query.await('SELECT * FROM owned_vehicles WHERE plate = ?', {normalizedPlate})
+        local vehExist = MySQL.query.await(('SELECT * FROM owned_vehicles WHERE plate = ? OR %s'):format(getPlateMatchClause()), {plate, normalizedPlate})
         if not vehExist[1] or not vehExist then
             print("vehicle doesn't exist: " .. normalizedPlate)
+            return
         end
-        MySQL.update('UPDATE owned_vehicles SET fuel = ?, engine = ?, body = ?, mods = ? WHERE plate = ?', {fuel, engine, body, json.encode(vehicleProps), normalizedPlate})
+        MySQL.update(('UPDATE owned_vehicles SET fuel = ?, engine = ?, body = ?, mods = ? WHERE plate = ? OR %s'):format(getPlateMatchClause()), {fuel, engine, body, json.encode(vehicleProps), plate, normalizedPlate})
     end
 end)
 
@@ -814,13 +834,14 @@ RegisterNetEvent('exter-garage:server:updateVehicleState', function(state, plate
         return
     end
     if Table == "player_vehicles" then
-        MySQL.update('UPDATE player_vehicles SET state = ?, depotprice = ? WHERE plate = ?', {state, 0, normalizedPlate})
+        MySQL.update(('UPDATE player_vehicles SET state = ?, depotprice = ? WHERE plate = ? OR %s'):format(getPlateMatchClause()), {state, 0, plate, normalizedPlate})
     else
-        MySQL.update('UPDATE owned_vehicles SET stored = ?, pound = ? WHERE plate = ?', {state, 0, normalizedPlate})
+        MySQL.update(('UPDATE owned_vehicles SET stored = ?, pound = ? WHERE plate = ? OR %s'):format(getPlateMatchClause()), {state, 0, plate, normalizedPlate})
     end
 end)
 
 RegisterNetEvent('exter-garage:server:UpdateOutsideVehicle', function(plate, vehicleNetID)
+    plate = sanitizePlate(plate)
     OutsideVehicles[plate] = nil
 end)
 
