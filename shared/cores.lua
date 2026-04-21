@@ -8,5 +8,10 @@ Cores = {
         Name = "QBXCore",
         ResourceName = "qbx_core",
         GetFramework = function() return exports["qbx_core"]:GetCoreObject() end
+    },
+    {
+        Name = "ESX",
+        ResourceName = "es_extended",
+        GetFramework = function() return exports["es_extended"]:getSharedObject() end
     }
 }
